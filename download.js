@@ -674,7 +674,7 @@ async function bootstrap() {
         await new Promise((res, rej) => {
           const child = spawn(apiExe, [], {
             stdio: 'ignore',
-            env: { ...process.env, PORT: '3000' },
+            env: { ...process.env, PORT: '3000', platform: 'lite' },
           });
           child.on('error', () => {
             // api.exe not found — API should already be running externally
