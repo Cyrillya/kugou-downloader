@@ -2,43 +2,73 @@
 
 ## 项目概述
 
-酷狗音乐（概念版）命令行下载器，用 Node.js 编写。基于 KuGouMusicApi 本地代理，实现歌单批量下载和单曲搜索下载。
+酷狗音乐（概念版）下载器，用 Node.js 编写。基于 KuGouMusicApi 本地代理，实现歌单批量下载和单曲搜索下载。支持便携构建为独立 Windows .exe。
 
 ## 技术栈
 
-- Node.js >= 12
-- CLI 交互：`readline`
+- Node.js >= 18
+- TUI 框架：`ink` (React 终端 UI) + `htm`（零构建 JSX）
+- 构建：esbuild + Node.js SEA (Single Executable Application)
 - HTTP：`axios`
-- 无外部 TUI 依赖（已从 blessed 迁移）
 
 ## 快速定位
 
 | 文件 | 用途 |
 |---|---|
-| `download.js` | 主程序，~470 行，全部逻辑 |
-| `run.bat` | 一键启动（含自动 setup、克隆 API、安装依赖） |
-| `run_js.bat` | 仅运行脚本（需先手动启动 API） |
-| `KuGouMusicApi/` | 自动克隆的 API 代理服务（已 gitignore） |
+| `download.js` | **TUI 主程序**，ink/React 全部 UI 逻辑 |
+| `lib/api.js` | 核心 API 模块：HTTP、session、登录、搜索、下载（ESM） |
+| `lib/yoga-shim.cjs` | yoga-layout 3.x API 兼容层（包装 2.x 同步 WASM） |
+| `lib/yoga-wasm.cjs` | yoga-layout 2.x 同步 WASM 加载器（构建时复制） |
+| `scripts/build.mjs` | 便携构建脚本：打包 → esbuild → SEA → .exe |
+| `run.bat` | 一键开发启动（clone API + 安装 + 运行） |
+| `run_js.bat` | 仅运行（API 需手动启动） |
+| `build.bat` | 便携构建入口 → 输出 `kugou-download.zip` |
+| `KuGouMusicApi/` | API 代理服务（已 gitignore） |
 
 ## 关键代码区域
 
-| 行号范围 | 功能 |
-|---|---|
-| 1-15 | 模块引入、常量（API_BASE, DOWNLOAD_DIR, SESSION_FILE） |
-| 17-40 | `api()` 通用 API 请求函数，自动携带 cookie |
-| 42-53 | 工具函数 `get()`, `sleep()`, `clearScreen()`, `log()` |
-| 60-90 | Session 管理：saveSession, loadSession, clearSession, verifySession |
-| 96-130 | `doLogin()` 登录流程：手机号 → 验证码 → VIP 激活 |
-| 132-265 | `mainMenu()` + `downloadPlaylist()` 主菜单和歌单下载 |
-| 270-380 | `doSearch()` + `displayResults()` + `downloadSingle()` 搜索和单曲下载 |
-| 400-470 | `bootstrap()` 启动引导 + 启动调用 |
+| 文件 | 区域 | 功能 |
+|---|---|---|
+| `lib/api.js` | 全部 | API、session、登录、下载核心逻辑 |
+| `download.js` | StatusBar | 顶部状态栏：标题 + 登录状态 |
+| `download.js` | LoginScreen | 登录：手机号 → 验证码 |
+| `download.js` | MainMenu | 主菜单：↑↓ 导航 |
+| `download.js` | PlaylistDownloadScreen | 歌单下载：URL 输入 → 进度条 |
+| `download.js` | SearchScreen | 搜索：关键词 → 列表 → 下载 |
+| `download.js` | App + Entry | 根组件 + SEA bootstrap（自动启动 api.exe） |
+
+## 构建流程
+
+```
+build.bat
+  ├─ npm install
+  ├─ node scripts/build.mjs
+  │    ├─ [0] patch ink reconciler (remove top-level await)
+  │    ├─ [1] build api.exe (esbuild + module registry pre-bundle + SEA)
+  │    │      ├─ bundle util + axios + qrcode into api.cjs
+  │    │      ├─ pre-build module handler registry (zero fs/runtime require)
+  │    │      ├─ copy public/ for static serving
+  │    │      └─ SEA inject → dist/api.exe
+  │    └─ [2] build download.exe (esbuild + yoga-shim + SEA)
+  │           └─ SEA inject → dist/download.exe
+  └─ powershell Compress-Archive → kugou-download.zip
+```
+
+## 便携版运行时
+
+```
+download.exe 启动
+  ├─ spawn api.exe (同目录)
+  ├─ 等待 localhost:3000 就绪
+  ├─ 启动 ink TUI
+  └─ 关闭时 kill api.exe
+```
 
 ## 数据流
 
 ```
-run.bat → KuGouMusicApi (port 3000) + download.js
-                ↓
-download.js → api() → localhost:3000 → KuGouMusicApi → kugou.com
+download.exe → spawn api.exe → localhost:3000 → KuGouMusicApi → kugou.com
+                                  ↑ 内嵌 Express + 预编译模块
 ```
 
 ## API 路由（通过 KuGouMusicApi 代理）
@@ -55,39 +85,20 @@ download.js → api() → localhost:3000 → KuGouMusicApi → kugou.com
 | `GET /playlist/track/all` | 获取歌单全部歌曲 |
 | `GET /song/url` | 获取歌曲下载链接 |
 
-## 搜索 API 响应字段（Kugou v3）
-
-搜索返回 `data.lists[]`，每个歌曲对象的关键字段：
-
-| 字段 | 说明 |
-|---|---|
-| `OriSongName` | 歌曲名 |
-| `SingerName` | 歌手名 |
-| `FileHash` | 哈希（下载用） |
-| `AlbumID` | 专辑 ID |
-| `FileName` | "歌手 - 歌曲" 完整名 |
-| `FileSize` | 文件大小（128k 预览版） |
-| `ExtName` | 扩展名（128k 预览版） |
-| `Bitrate` | 码率（128k 预览版） |
-| `SQ` | 无损哈希（非空即有无损） |
-| `HQ` | 高品质哈希（非空即有 320k） |
-
 ## 下载策略
 
 1. 请求 `quality=flac`，用 `FileHash`
 2. 若失败，请求 `quality=320`，用同一 `FileHash`
-3. 歌单下载有 500ms 间隔，防止触发限流
+3. 歌单下载 300ms 间隔，防止限流
+4. 已存在文件跳过（文件名模糊匹配）
 
 ## Session 字段
 
-`session.json` 存储的 cookie 字段：
-
-token, userid, vip_type, vip_token, dfid,
-KUGOU_API_GUID, KUGOU_API_MID, KUGOU_API_DEV, KUGOU_API_MAC
+`session.json` 存储的 cookie：token, userid, vip_type, vip_token, dfid, KUGOU_API_GUID, KUGOU_API_MID, KUGOU_API_DEV, KUGOU_API_MAC
 
 ## 注意
 
-- 概念版（`platform=lite`）必须启用才能免费获得 VIP
-- 搜索需要登录态，否则返回 `error_code: 152`
-- 输入框使用 `process.stdin.on('data')` 原始字节读取，不依赖 blessed
-- `.bat` 使用 `%~dp0` 相对路径
+- 概念版 `platform=lite` 启用 VIP
+- 搜索需登录态，否则 `error_code: 152`
+- ink TUI resize 时可能渲染残留，按 Ctrl+C 重启
+- 便携版 api.exe 的模块全部预编译，零文件系统依赖
