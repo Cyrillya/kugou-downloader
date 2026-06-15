@@ -673,7 +673,7 @@ async function bootstrap() {
 
         await new Promise((res, rej) => {
           const child = spawn(apiExe, [], {
-            stdio: 'ignore',
+            stdio: ['ignore', process.stderr, process.stderr],
             env: { ...process.env, PORT: '3000', platform: 'lite' },
           });
           child.on('error', () => {
