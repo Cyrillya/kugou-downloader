@@ -96,7 +96,7 @@ function LoginScreen({ onLogin }) {
       setMsg('验证码已发送，请查收短信');
       setStep('captcha');
     } else {
-      setError('验证码发送失败: ' + (r.message || r.msg || ''));
+      setError('验证码发送失败: ' + (r.message || r.msg || get(r, 'data') || ''));
     }
   }, [phone]);
 
