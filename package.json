@@ -2,8 +2,25 @@
   "name": "kugou-downloader",
   "version": "1.0.0",
   "private": true,
+  "type": "module",
+  "main": "download.js",
   "dependencies": {
     "axios": "^1.7.0",
-    "blessed": "^0.1.81"
+    "big-integer": "^1.6.52",
+    "crypto-js": "^4.2.0",
+    "htm": "^3.1.1",
+    "ink": "^5.2.0",
+    "ink-spinner": "^5.0.0",
+    "ink-text-input": "^6.0.0",
+    "node-forge": "^1.4.0",
+    "pako": "^2.1.0",
+    "qrcode": "^1.5.4",
+    "react": "^18.3.0",
+    "url": "^0.11.4",
+    "yoga-layout": "2.0.1"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.1",
+    "postject": "^1.0.0-alpha.6"
   }
 }

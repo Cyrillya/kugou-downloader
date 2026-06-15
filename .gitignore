@@ -3,3 +3,6 @@ Downloads/
 session.json
 KuGouMusicApi/
 .reasonix/
+dist/
+kugou-download.zip
+dist/pkg/
