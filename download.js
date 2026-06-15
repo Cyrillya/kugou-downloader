@@ -6,10 +6,13 @@ import TextInput from 'ink-text-input';
 import Spinner from 'ink-spinner';
 import fs from 'fs';
 import path from 'path';
+import qrcode from 'qrcode';
 
 import {
   healthCheck, registerDevice, loadSession, clearSession,
   verifySession, sendCaptcha, loginWithCode,
+  loginWithPassword,
+  loginQrKey, loginQrCreate, loginQrCheck, finalizeLogin,
   resolvePlaylistId, fetchPlaylistTracks, searchSongs,
   getSongUrl, downloadFile, extractSongInfo, findExistingFile,
   sleep, DOWNLOAD_DIR, get,
@@ -80,25 +83,94 @@ function LoadingScreen({ msg }) {
 // ─── LoginScreen ──────────────────────────────────────────
 
 function LoginScreen({ onLogin }) {
+  const [mode, setMode] = useState('choose');
+  const [selected, setSelected] = useState(0);
   const [step, setStep] = useState('phone');
   const [phone, setPhone] = useState('');
   const [code, setCode] = useState('');
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [msg, setMsg] = useState('');
+  const [qrPhase, setQrPhase] = useState('idle');
+  const [qrText, setQrText] = useState('');
+  const [qrHint, setQrHint] = useState('');
+  const phoneReqRef = useRef(0);
+  const pwdReqRef = useRef(0);
+  const qrReqRef = useRef(0);
+
+  const resetPhoneFlow = useCallback(() => {
+    phoneReqRef.current += 1;
+    setMode('choose');
+    setSelected(0);
+    setStep('phone');
+    setPhone('');
+    setCode('');
+    setMsg('');
+  }, []);
+
+  const resetPasswordFlow = useCallback(() => {
+    pwdReqRef.current += 1;
+    setMode('choose');
+    setSelected(0);
+    setStep('phone');
+    setUsername('');
+    setPassword('');
+    setMsg('');
+  }, []);
+
+  const resetQrFlow = useCallback(() => {
+    qrReqRef.current += 1;
+    setQrPhase('idle');
+    setQrText('');
+    setQrHint('');
+  }, []);
+
+  const enterPhoneLogin = useCallback(() => {
+    resetQrFlow();
+    resetPasswordFlow();
+    setError('');
+    setMsg('');
+    setStep('phone');
+    setMode('phone');
+  }, [resetQrFlow, resetPasswordFlow]);
+
+  const enterPasswordLogin = useCallback(() => {
+    phoneReqRef.current += 1;
+    qrReqRef.current += 1;
+    setError('');
+    setMsg('');
+    setPhone('');
+    setCode('');
+    setStep('username');
+    setMode('password');
+  }, []);
+
+  const enterQrLogin = useCallback(() => {
+    phoneReqRef.current += 1;
+    pwdReqRef.current += 1;
+    setError('');
+    setMsg('');
+    setCode('');
+    setStep('phone');
+    setMode('qr');
+  }, []);
 
   const sendCode = useCallback(async () => {
     const p = phone.trim();
     if (!p || p.length !== 11) { setError('请输入有效的11位手机号'); return; }
     setError('');
     setMsg('正在发送验证码...');
+    const reqId = ++phoneReqRef.current;
     const r = await sendCaptcha(p);
+    if (reqId !== phoneReqRef.current || mode !== 'phone') return;
     if (get(r, 'status') === 1) {
       setMsg('验证码已发送，请查收短信');
       setStep('captcha');
     } else {
       setError('验证码发送失败: ' + (r.message || r.msg || get(r, 'data') || ''));
     }
-  }, [phone]);
+  }, [phone, mode]);
 
   const doLogin = useCallback(async () => {
     const c = code.trim();
@@ -106,22 +178,173 @@ function LoginScreen({ onLogin }) {
     setError('');
     setMsg('正在登录...');
     setStep('logging');
+    const reqId = ++phoneReqRef.current;
     try {
       await loginWithCode(phone.trim(), c);
+      if (reqId !== phoneReqRef.current || mode !== 'phone') return;
       onLogin();
     } catch (e) {
+      if (reqId !== phoneReqRef.current || mode !== 'phone') return;
       setError(e.message);
       setStep('captcha');
     }
-  }, [phone, code, onLogin]);
+  }, [phone, code, mode, onLogin]);
+
+  const doPasswordLogin = useCallback(async () => {
+    const u = username.trim();
+    const p = password;
+    if (!u || !p) return;
+    setError('');
+    setMsg('正在登录...');
+    setStep('logging');
+    const reqId = ++pwdReqRef.current;
+    try {
+      await loginWithPassword(u, p);
+      if (reqId !== pwdReqRef.current || mode !== 'password') return;
+      onLogin();
+    } catch (e) {
+      if (reqId !== pwdReqRef.current || mode !== 'password') return;
+      setError(e.message);
+      setStep('password');
+    }
+  }, [username, password, mode, onLogin]);
+
+  useEffect(() => {
+    if (mode !== 'qr') return undefined;
+
+    let cancelled = false;
+    const reqId = ++qrReqRef.current;
+
+    (async () => {
+      try {
+        setQrPhase('loading');
+        setQrHint('正在获取二维码...');
+        const { key } = await loginQrKey();
+        if (cancelled || reqId !== qrReqRef.current) return;
+
+        const created = await loginQrCreate(key);
+        if (cancelled || reqId !== qrReqRef.current) return;
+
+        let qr = created.qrText;
+        try {
+          qr = await qrcode.toString(created.qrText, { type: 'terminal', small: true });
+        } catch (_e) {
+          qr = created.qrText;
+        }
+        if (cancelled || reqId !== qrReqRef.current) return;
+
+        setQrText(qr);
+        setQrPhase('scan');
+        setQrHint('请使用手机扫码');
+
+        while (!cancelled && reqId === qrReqRef.current) {
+          const r = await loginQrCheck(key);
+          if (cancelled || reqId !== qrReqRef.current) return;
+
+          const status =
+            get(r, 'data.status') ??
+            get(r, 'body.data.status') ??
+            get(r, 'body.status') ??
+            get(r, 'status');
+          if (status === 1 || status === '1') {
+            setQrPhase('scan');
+            setQrHint('请使用手机扫码');
+          } else if (status === 2 || status === '2') {
+            setQrPhase('confirm');
+            setQrHint('已扫码，请在手机上确认登录');
+          } else if (status === 4 || status === '4') {
+            setQrHint('登录成功，正在进入主界面...');
+            await finalizeLogin();
+            if (!cancelled && reqId === qrReqRef.current) onLogin();
+            return;
+          } else if (status === 0 || status === '0') {
+            setError('二维码已过期，请重新选择二维码登录');
+            resetQrFlow();
+            setMode('choose');
+            return;
+          } else {
+            setError('二维码登录失败，请重试');
+            resetQrFlow();
+            setMode('choose');
+            return;
+          }
+
+          await sleep(1500);
+        }
+      } catch (e) {
+        if (cancelled || reqId !== qrReqRef.current) return;
+        setError('二维码登录失败: ' + e.message);
+        resetQrFlow();
+        setMode('choose');
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [mode, onLogin, resetQrFlow]);
 
   useInput((_input, key) => {
-    if (step === 'phone' && key.return) sendCode();
-    if ((step === 'captcha' || step === 'logging') && key.escape) {
+    if (mode === 'choose') {
+      if (key.upArrow || key.downArrow) {
+        setSelected((s) => (s + (key.upArrow ? -1 : 1) + 3) % 3);
+      }
+      if (key.return) {
+        if (selected === 0) enterPhoneLogin();
+        if (selected === 1) enterQrLogin();
+        if (selected === 2) enterPasswordLogin();
+      }
+      return;
+    }
+
+    if (mode === 'phone' && step === 'phone' && key.return) sendCode();
+
+    if (mode === 'phone' && step === 'phone' && key.escape) {
+      resetPhoneFlow();
+      setError('');
+      setMsg('');
+      return;
+    }
+
+    if (mode === 'phone' && (step === 'captcha' || step === 'logging') && key.escape) {
+      phoneReqRef.current += 1;
       setStep('phone');
       setError('');
       setMsg('');
       setCode('');
+    }
+
+    if (mode === 'password' && step === 'username' && key.return && username.trim()) {
+      setStep('password');
+      return;
+    }
+
+    if (mode === 'password' && step === 'username' && key.return && !username.trim()) {
+      setError('请输入用户名');
+      return;
+    }
+
+    if (mode === 'password' && step === 'password' && key.return) {
+      doPasswordLogin();
+      return;
+    }
+
+    if (mode === 'password' && key.escape) {
+      if (step === 'password') {
+        setStep('username');
+        setPassword('');
+        setError('');
+        setMsg('');
+      } else {
+        resetPasswordFlow();
+        setError('');
+      }
+      return;
+    }
+
+    if (mode === 'qr' && key.escape) {
+      resetQrFlow();
+      setError('');
+      setMode('choose');
+      setSelected(0);
     }
   });
 
@@ -130,7 +353,24 @@ function LoginScreen({ onLogin }) {
       <${Text} bold color=${C.accent}>=== 登录 ===<//>
       <${Box} height=${1} />
 
-      ${step === 'phone' && html`
+      ${mode === 'choose' && html`
+        <${Box} flexDirection="column">
+          <${Text}>请选择登录方式:<//>
+          <${Box} height=${1} />
+        ${['手机号登录', '二维码登录', '账号密码登录'].map((label, idx) => html`
+            <${Box} key=${label}>
+              <${Text} color=${idx === selected ? C.brand : undefined}>
+                ${idx === selected ? '▸ ' : '  '}${label}
+              <//>
+            <//>
+          `)}
+          <${Box} height=${1} />
+          <${Text} dimColor>↑↓ 选择  Enter 确认<//>
+          ${error ? html`<${Box}><${Text} color=${C.red}>✗ ${error}<//><//>` : null}
+        <//>
+      `}
+
+      ${mode === 'phone' && step === 'phone' && html`
         <${Box} flexDirection="column">
           <${Text}>请输入手机号:<//>
           <${Box}>
@@ -138,11 +378,43 @@ function LoginScreen({ onLogin }) {
             <${TextInput} value=${phone} onChange=${setPhone} placeholder="手机号" />
           <//>
           <${Box} height=${1} />
-          <${Text} dimColor>按 Enter 发送验证码<//>
+          <${Text} dimColor>Enter 发送验证码  Esc 返回选择<//>
         <//>
       `}
 
-      ${step === 'captcha' && html`
+      ${mode === 'password' && step === 'username' && html`
+        <${Box} flexDirection="column">
+          <${Text}>请输入账号/用户名:<//>
+          <${Box}>
+            <${Text} color=${C.accent}>▸ <//>
+            <${TextInput} value=${username} onChange=${setUsername} placeholder="用户名" />
+          <//>
+          <${Box} height=${1} />
+          <${Text} dimColor>Enter 继续  Esc 返回选择<//>
+        <//>
+      `}
+
+      ${mode === 'password' && step === 'password' && html`
+        <${Box} flexDirection="column">
+          <${Text}>账号: <${Text} color=${C.accent}>${username}<//><//>
+          <${Box} height=${1} />
+          <${Text}>请输入密码:<//>
+          <${Box}>
+            <${Text} color=${C.accent}>▸ <//>
+            <${TextInput} value=${password} onChange=${setPassword} placeholder="密码" />
+          <//>
+          <${Box} height=${1} />
+          <${Text} dimColor>Enter 登录  Esc 返回修改账号<//>
+        <//>
+      `}
+
+      ${mode === 'password' && step === 'logging' && html`
+        <${Box}>
+          <${Text} color=${C.accent}><${Spinner} type="dots" /> 登录中，请稍候...<//>
+        <//>
+      `}
+
+      ${mode === 'phone' && step === 'captcha' && html`
         <${Box} flexDirection="column">
           <${Text}>手机号: <${Text} color=${C.accent}>${phone}<//><//>
           ${msg ? html`<${Text} color=${C.green}>${msg}<//>` : null}
@@ -157,9 +429,31 @@ function LoginScreen({ onLogin }) {
         <//>
       `}
 
-      ${step === 'logging' && html`
+      ${mode === 'phone' && step === 'logging' && html`
         <${Box}>
           <${Text} color=${C.accent}><${Spinner} type="dots" /> 登录中，请稍候...<//>
+        <//>
+      `}
+
+      ${mode === 'qr' && html`
+        <${Box} flexDirection="column">
+          <${Text}>二维码登录<//>
+          <${Box} height=${1} />
+          ${qrPhase === 'loading' && html`
+            <${Box}><${Text} color=${C.accent}><${Spinner} type="dots" /> ${qrHint || '正在生成二维码...'}<//><//>
+          `}
+          ${qrPhase === 'scan' && html`
+            <${Box} flexDirection="column">
+              <${Text} dimColor>${qrHint}<//>
+              <${Box} height=${1} />
+              <${Text}>${qrText}<//>
+            <//>
+          `}
+          ${qrPhase === 'confirm' && html`
+            <${Text} color=${C.yellow}>${qrHint}<//>
+          `}
+          <${Box} height=${1} />
+          <${Text} dimColor>Esc 返回选择<//>
         <//>
       `}
 

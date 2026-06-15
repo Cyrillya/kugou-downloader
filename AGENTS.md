@@ -31,7 +31,7 @@
 |---|---|---|
 | `lib/api.js` | 全部 | API、session、登录、下载核心逻辑 |
 | `download.js` | StatusBar | 顶部状态栏：标题 + 登录状态 |
-| `download.js` | LoginScreen | 登录：手机号 → 验证码 |
+| `download.js` | LoginScreen | 登录：手机号 / 二维码 / 账号密码 |
 | `download.js` | MainMenu | 主菜单：↑↓ 导航 |
 | `download.js` | PlaylistDownloadScreen | 歌单下载：URL 输入 → 进度条 |
 | `download.js` | SearchScreen | 搜索：关键词 → 列表 → 下载 |
@@ -79,6 +79,10 @@ download.exe → spawn api.exe → localhost:3000 → KuGouMusicApi → kugou.co
 | `POST /register/dev` | 设备注册 |
 | `GET /captcha/sent` | 发送验证码 |
 | `POST /login/cellphone` | 手机验证码登录 |
+| `POST /login` | 账号密码登录 |
+| `GET /login/qr/key` | 获取二维码 key |
+| `GET /login/qr/create` | 生成二维码 |
+| `GET /login/qr/check` | 检查二维码状态 |
 | `POST /youth/vip` | 激活概念版 VIP |
 | `GET /user/vip/detail` | 验证登录状态 |
 | `GET /search` | 歌曲搜索（v3） |
