@@ -29,9 +29,9 @@
 
 ## 运行截图
 
-![download](img/download.png)
-![downloading](img/downloading.png)
-![search](img/search.png)
+![download](https://github.com/user-attachments/assets/fb5a331e-a820-4873-a696-e8f1ea16ec47)
+![downloading](https://github.com/user-attachments/assets/4fe91d88-aee3-4133-b6d2-95966b8cc8c3)
+![search](https://github.com/user-attachments/assets/4e7dbd65-db99-424b-b003-de7f23633698)
 
 ## 快速开始
 
